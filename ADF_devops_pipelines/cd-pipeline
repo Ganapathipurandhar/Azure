@@ -1,0 +1,56 @@
+trigger: none  # CD Pipeline does not trigger on code changes
+pr: none
+
+resources:
+  pipelines:
+    - pipeline: CI_Build  # ✅ Refers to CI Pipeline
+      source: 'ADF-CI-Pipeline'  # 🔥 Name of the CI Pipeline
+      trigger:
+        branches:
+          - main  # ✅ Auto-trigger CD when CI publishes artifacts
+
+stages:
+- stage: UAT_Deployment
+  jobs:
+  - job: DeployToUAT
+    steps:
+    - download: CI_Build  # ✅ Download CI Pipeline Artifacts
+      artifact: ADF_ARM_Templates
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureSubscription: 'Your-Service-Connection'
+        resourceGroupName: 'UAT-RG'
+        location: 'East US'
+        templateLocation: 'Linked artifact'
+        csmFile: '$(Pipeline.Workspace)/CI_Build/ADF_ARM_Templates/ARMTemplate.json'
+        csmParametersFile: '$(Pipeline.Workspace)/CI_Build/ADF_ARM_Templates/ARMTemplateParameters.json'
+
+  # Manual Approval before Production Deployment
+  - task: ManualValidation@0
+    inputs:
+      notifyUsers: 'your.email@example.com'
+      instructions: 'Please approve the UAT deployment before proceeding to Production'
+
+- stage: Prod_Deployment
+  dependsOn: UAT_Deployment
+  condition: succeeded()
+  jobs:
+  - deployment: DeployToProd
+    environment: Production
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: CI_Build
+            artifact: ADF_ARM_Templates
+          - task: AzureResourceManagerTemplateDeployment@3
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureSubscription: 'Your-Service-Connection'
+              resourceGroupName: 'Prod-RG'
+              location: 'East US'
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Pipeline.Workspace)/CI_Build/ADF_ARM_Templates/ARMTemplate.json'
+              csmParametersFile: '$(Pipeline.Workspace)/CI_Build/ADF_ARM_Templates/ARMTemplateParameters.json'

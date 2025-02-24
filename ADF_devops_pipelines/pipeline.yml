@@ -1,0 +1,70 @@
+trigger:
+  - main  # Adjust this to match your branch
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  azureSubscription: 'Your-Service-Connection'  # Replace with your Azure DevOps service connection name
+  resourceGroupName: 'your-resource-group'
+  dataFactoryName: 'your-adf-name'
+  templateFolder: '$(Build.ArtifactStagingDirectory)/ADF_ARM_Templates'
+  artifactName: 'adf-artifacts'
+  environment: 'dev'  # Change for different environments
+
+stages:
+- stage: Build
+  displayName: 'Build ADF Artifacts'
+  jobs:
+  - job: Export_ADF
+    displayName: 'Export ADF from Source'
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Export ADF ARM Template'
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az datafactory export-template \
+            --resource-group $(resourceGroupName) \
+            --factory-name $(dataFactoryName) \
+            --output-path $(templateFolder)
+          
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish ADF Artifacts'
+      inputs:
+        pathToPublish: '$(templateFolder)'
+        artifactName: '$(artifactName)'
+
+- stage: Deploy
+  displayName: 'Deploy ADF to Target Environment'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: DeployADF
+    displayName: 'Deploy ADF to Target'
+    environment: $(environment)
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download ADF Artifacts'
+            inputs:
+              artifactName: '$(artifactName)'
+              downloadPath: '$(Build.ArtifactStagingDirectory)'
+
+          - task: AzureResourceManagerTemplateDeployment@3
+            displayName: 'Deploy ARM Template'
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: $(azureSubscription)
+              subscriptionId: 'your-subscription-id'  # Replace with your Azure subscription ID
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: $(resourceGroupName)
+              location: 'East US'  # Change as per your region
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Build.ArtifactStagingDirectory)/ADF_ARM_Templates/ARMTemplateForFactory.json'
+              csmParametersFile: '$(Build.ArtifactStagingDirectory)/ADF_ARM_Templates/ARMTemplateParametersForFactory.json'
+              deploymentMode: 'Incremental'
